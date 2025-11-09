@@ -458,7 +458,7 @@ There are no query parameters for this endpoint; the request is multipart/form-d
 If we comment out the `uri` property in the schema but leave it in the example in `zerver/openapi/zulip.yaml`, for example:
 
 ```yaml
-  /user_uploads:
+    /user_uploads:
     post:
       operationId: upload-file
       #...
