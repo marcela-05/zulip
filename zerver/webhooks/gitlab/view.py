@@ -572,7 +572,6 @@ EVENT_FUNCTION_MAPPER: dict[str, EventFunction] = {
 
 ALL_EVENT_TYPES = list(EVENT_FUNCTION_MAPPER.keys())
 
-
 @webhook_view("GitLab", all_event_types=ALL_EVENT_TYPES)
 @typed_endpoint
 def api_gitlab_webhook(
@@ -584,6 +583,40 @@ def api_gitlab_webhook(
     use_merge_request_title: Json[bool] = True,
     user_specified_topic: OptionalUserSpecifiedTopicStr = None,
 ) -> HttpResponse:
+
+    ignore_private_repos = request.GET.get("ignore_private_repositories") == "true"
+
+    # GitLab sends visibility information inconsistently across event types:
+    # - project["visibility"] = "public" | "private" | "internal"
+    # - project["public"] = true/false
+    # - repository["visibility_level"] = 0 (private), 20 (internal), 30 (public)
+    # - repository["public"] = true/false
+
+    # Project-level visibility checks
+    project = payload.get("project", {})
+    visibility = project.get("visibility")
+    public_flag = project.get("public")
+
+    project_is_private = (
+        visibility == "private"
+        or public_flag is False
+    )
+
+    # Repository-level visibility checks
+    repository = payload.get("repository", {})
+    visibility_level = repository.get("visibility_level")
+    repo_public_flag = repository.get("public")
+
+    repo_is_private = (
+        visibility_level == 0
+        or repo_public_flag is False
+    )
+
+    is_private = project_is_private or repo_is_private
+
+    if ignore_private_repos and is_private:
+        return json_success(request)
+
     event = get_event(request, payload, branches)
     if event is not None:
         event_body_function = get_body_based_on_event(event)
@@ -592,15 +625,15 @@ def api_gitlab_webhook(
             include_title=user_specified_topic is not None,
         )
 
-        # Add a link to the project if a custom topic is set
         if user_specified_topic:
             project_url = f"[{get_repo_name(payload)}]({get_project_homepage(payload)})"
-            body = f"[{project_url}] {body}"
+            body = f"{project_url} {body}"
 
         topic_name = get_topic_based_on_event(event, payload, use_merge_request_title)
         check_send_webhook_message(
             request, user_profile, topic_name, body, event, no_previews=skip_previews(event)
         )
+
     return json_success(request)
 
 
