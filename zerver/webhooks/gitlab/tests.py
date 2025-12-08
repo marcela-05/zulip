@@ -2,6 +2,8 @@ from unittest.mock import MagicMock, patch
 
 from zerver.lib.test_classes import WebhookTestCase
 from zerver.lib.webhooks.git import COMMITS_LIMIT
+from zerver.models import Message
+
 
 
 class GitlabHookTests(WebhookTestCase):
@@ -64,6 +66,60 @@ class GitlabHookTests(WebhookTestCase):
         self.check_webhook(
             "push_hook__push_commits_more_than_limit", expected_topic_name, expected_message
         )
+    
+    def test_private_repo_ignored_when_option_enabled(self) -> None:
+        """
+        Events from private repositories are ignored when
+        ignore_private_repositories=true is present in the URL.
+        """
+        self.url = self.build_webhook_url(ignore_private_repositories="true")
+
+        self.subscribe(self.test_user, self.CHANNEL_NAME)
+
+        initial_count = Message.objects.filter(
+            stream__name=self.CHANNEL_NAME
+        ).count()
+
+        body = self.get_body("push_private_repo")
+        result = self.client_post(
+            self.url,
+            body,
+            content_type="application/json",
+            HTTP_X_GITLAB_EVENT="Push Hook",
+        )
+        self.assert_json_success(result)
+
+        final_count = Message.objects.filter(
+            stream__name=self.CHANNEL_NAME
+        ).count()
+        self.assertEqual(initial_count, final_count)
+
+    def test_public_repo_still_sends_with_ignore_option(self) -> None:
+        """
+        Public repositories should still send messages even when
+        ignore_private_repositories=true is present in the URL.
+        """
+        # URL padrão + nova opção
+        self.url = self.build_webhook_url(ignore_private_repositories="true")
+
+        expected_topic_name = "my-awesome-project / tomek"
+        expected_message = (
+            "Tomasz Kolek "
+            "[pushed](https://gitlab.com/tomaszkolek0/my-awesome-project/-/compare/"
+            "5fcdd5551fc3085df79bece2c32b1400802ac407..."
+            "eb6ae1e591e0819dc5bf187c6bfe18ec065a80e9) "
+            "2 commits to branch tomek.\n\n"
+            "* b ([66abd2da288]"
+            "(https://gitlab.com/tomaszkolek0/my-awesome-project/commit/"
+            "66abd2da28809ffa128ed0447965cf11d7f863a7))\n"
+            "* c ([eb6ae1e591e]"
+            "(https://gitlab.com/tomaszkolek0/my-awesome-project/commit/"
+            "eb6ae1e591e0819dc5bf187c6bfe18ec065a80e9))"
+        )
+
+        self.check_webhook("push_hook", expected_topic_name, expected_message)
+
+
 
     def test_remove_branch_event_message(self) -> None:
         expected_topic_name = "my-awesome-project / tomek"
